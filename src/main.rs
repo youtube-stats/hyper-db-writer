@@ -1,4 +1,5 @@
 extern crate chrono;
+extern crate futures;
 extern crate hyper;
 extern crate postgres;
 extern crate quick_protobuf;
@@ -12,9 +13,8 @@ use statics::{CACHE_SIZE, POSTGRESQL_URL, INSERT};
 pub mod message;
 use message::{Ack, SubMessage};
 
-use crate::hyper::{Response, Server, Body, Request, Method};
+use crate::hyper::{Response, Server, Body, Request};
 use crate::hyper::rt::{Future, Stream, run};
-use crate::hyper::service::service_fn_ok;
 use crate::postgres::{Connection, TlsMode};
 use crate::postgres::transaction::Transaction;
 use crate::quick_protobuf::{serialize_into_vec, deserialize_from_slice};
@@ -24,6 +24,7 @@ use ::std::sync::mpsc::channel;
 use ::std::thread;
 use crate::statics::DRAIN_RANGE;
 use std::ops::Range;
+use hyper::service::service_fn;
 
 pub fn main() {
     let (sx, rx): (Sender<SubMessage>, Receiver<SubMessage>) = channel();
@@ -111,61 +112,40 @@ pub fn main() {
                 sx.clone()
             };
 
-            service_fn_ok(move |req: Request<Body>| {
-                println!("{:?}", req.body());
-
-                let method: Method = req.method().clone();
-                let path: String = {
-                    let path: &str = req.uri().path();
-
-                    path.to_string().clone()
+            service_fn(move |req: Request<Body>| {
+                let sx: Sender<SubMessage> = {
+                    let sx: &Sender<SubMessage> = &sx;
+                    sx.clone()
                 };
 
-                let bytes: Vec<u8> = {
-                    let body: Body = req.into_body();
-                    let entire_body = body.concat2();
-                    let mut bytes: Vec<u8> = Vec::new();
+                req.into_body()
+                    .concat2()
+                    .and_then(move |entire_body| {
+                        let sx: Sender<SubMessage> = {
+                            let sx: &Sender<SubMessage> = &sx;
+                            sx.clone()
+                        };
 
-                    let _ = entire_body.map(|body| {
-                        let other = body.into_bytes();
-                        let mut other: Vec<u8> = other.to_vec();
+                        let good_resp = {
+                            let mut message: Ack = Ack::default();
+                            message.ok = true;
+                            let vec: Vec<u8> = serialize_into_vec(&message)
+                                .expect("Cannot serialize `foobar`");
 
-                        println!("Read {} bytes", other.len());
-                        bytes.append(&mut other);
-                    });
+                            let body: Body = Body::from(vec);
+                            Response::new(body)
+                        };
 
-                    bytes
-                };
-                let bytes: &[u8] = bytes.as_slice();
-                let msg_option = deserialize_from_slice(bytes);
+                        let bytes: Vec<u8> = entire_body.to_vec();
+                        let bytes: &[u8] = bytes.as_slice();
+                        let t: SubMessage = deserialize_from_slice(bytes)
+                            .expect("Could not deserialize");
 
-                let good_resp = {
-                    let mut message: Ack = Ack::default();
-                    message.ok = true;
-                    let vec: Vec<u8> = serialize_into_vec(&message)
-                        .expect("Cannot serialize `foobar`");
+                        sx.send(t).clone()
+                            .expect("Could not send message");
 
-                    let body: Body = Body::from(vec);
-                    Response::new(body)
-                };
-                let bad_resp = {
-                    let mut message: Ack = Ack::default();
-                    message.ok = false;
-                    let vec: Vec<u8> = serialize_into_vec(&message)
-                        .expect("Cannot serialize `foobar`");
-
-                    let body: Body = Body::from(vec);
-                    Response::new(body)
-                };
-
-                match (method, path, msg_option) {
-                    (Method::POST, _endpoint, Ok(t)) => {
-                        sx.send(t)
-                            .expect("Could not send msg");
-                        good_resp
-                    },
-                    _ => bad_resp
-                }
+                        Ok(good_resp)
+                    })
             })
         };
 
