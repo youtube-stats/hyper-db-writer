@@ -1,4 +1,3 @@
-extern crate bytes;
 extern crate chrono;
 extern crate hyper;
 extern crate postgres;
@@ -13,7 +12,6 @@ use statics::{CACHE_SIZE, POSTGRESQL_URL, INSERT};
 pub mod message;
 use message::{Ack, SubMessage};
 
-use crate::bytes::Bytes;
 use crate::hyper::{Response, Server, Body, Request, Method};
 use crate::hyper::rt::{Future, Stream, run};
 use crate::hyper::service::service_fn_ok;
@@ -114,21 +112,22 @@ pub fn main() {
             };
 
             service_fn_ok(move |req: Request<Body>| {
+                println!("{:?}", req.body());
+
                 let method: Method = req.method().clone();
                 let path: String = {
                     let path: &str = req.uri().path();
 
                     path.to_string().clone()
                 };
-                let _endpoint: String = format!("/post");
 
-                let bytes = {
+                let bytes: Vec<u8> = {
                     let body: Body = req.into_body();
                     let entire_body = body.concat2();
                     let mut bytes: Vec<u8> = Vec::new();
 
                     let _ = entire_body.map(|body| {
-                        let other: Bytes = body.into_bytes();
+                        let other = body.into_bytes();
                         let mut other: Vec<u8> = other.to_vec();
 
                         println!("Read {} bytes", other.len());
