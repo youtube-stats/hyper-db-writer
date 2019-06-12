@@ -25,6 +25,7 @@ use ::std::thread;
 use crate::statics::DRAIN_RANGE;
 use std::ops::Range;
 use hyper::service::service_fn;
+use chrono::{DateTime, Local};
 
 pub fn main() {
     let (sx, rx): (Sender<SubMessage>, Receiver<SubMessage>) = channel();
@@ -53,12 +54,14 @@ pub fn main() {
                     {
                         let mut other: Vec<SubStoreDatum> = {
                             let mut msg_store: Vec<SubStoreDatum> = Vec::new();
+                            let time: DateTime<Local> = Local::now();
 
                             for i in 0..other.ids.len() {
                                 let id: i32 = other.ids[i];
                                 let sub: i32 = other.subs[i];
 
                                 let value: SubStoreDatum = SubStoreDatum {
+                                    time,
                                     id,
                                     sub
                                 };
@@ -81,10 +84,12 @@ pub fn main() {
                             let query: &'static str = INSERT;
                             for i in DRAIN_RANGE {
                                 let sub_row: &SubStoreDatum = &store[i];
+
+                                let time: &DateTime<Local> = &sub_row.time;
                                 let id: &i32 =  &sub_row.id;
                                 let sub: &i32 = &sub_row.sub;
 
-                                trans.execute(query, &[id, sub])
+                                trans.execute(query, &[time, id, sub])
                                     .expect("Could not insert row");
                             }
 
